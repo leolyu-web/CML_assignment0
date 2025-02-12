@@ -199,13 +199,11 @@ class FaceRobotEnv:
         # Run simulation for a fixed number of steps
         for _ in range(num_steps):
             p.stepSimulation()
-            self.camera()
             time.sleep(self.time_step)
 
 
     def disconnect(self):
         """ Disconnects from the PyBullet simulation. """
-        # cv2.destroyAllWindows()
         p.disconnect()
 
 
@@ -218,6 +216,7 @@ if __name__ == "__main__":
     try:
         for _ in range(100000):  # Run simulation for 1000 steps
             env.step()
+            env.camera()
     except KeyboardInterrupt:
         print("Simulation interrupted by user.")
 
