@@ -25,7 +25,7 @@ class FaceRobotEnv:
                  urdf_path="face_sim/urdf/face_sim.urdf",
                  use_gui=True,
                  debug_tool=True,
-                 time_step=1. / 24000.,object_location=[-0.25, -1, 0.5]):
+                 time_step=1. / 24000.,object_location=[-0.25, -1, 0.5],usefixedbase=True):
         """
         Initialize the Face Robot Environment.
 
@@ -92,19 +92,20 @@ class FaceRobotEnv:
     
 
         for i in range(self.num_joints):
-            joint_info = p.getJointInfo(self.robot_id, i)
-            print(joint_info)
+            self.joint_info = p.getJointInfo(self.robot_id, i)
+            print(self.joint_info)
 
-            if joint_info[12]==b'R_iris':
+            if self.joint_info[12]==b'R_iris':
                 self.link_index.append(i)
 
-            elif joint_info[12]==b'L_iris':
+            elif self.joint_info[12]==b'L_iris':
                 self.link_index.append(i)
         print(self.link_index)
 
-        self.cube_start_position = object_location
+        self.cube_start_position= object_location
+        self.objectfixedbase = usefixedbase
         cube_start_orientation = p.getQuaternionFromEuler([0, 0, 0]) 
-        self.cube_id = p.loadURDF("cube_small.urdf", self.cube_start_position, cube_start_orientation, globalScaling=3, useFixedBase=False)
+        self.cube_id = p.loadURDF("cube_small.urdf", self.cube_start_position, cube_start_orientation, globalScaling=3, useFixedBase=self.objectfixedbase)
 
 
     def camera(self):
@@ -113,7 +114,7 @@ class FaceRobotEnv:
         height=500
         fov=70
         aspect= width / height
-        near_plane=0.017
+        near_plane=0.02
         far_plane=8
 
         for i in self.link_index:
@@ -146,31 +147,77 @@ class FaceRobotEnv:
 
         cv2.waitKey(1)
     
-    def eye_tracking(self):
+    def eye_tracking(self): 
+
+        neck_yaw_min, neck_yaw_max, _ = JOINT_LIMITS["base_neck1"]
+        neck_pitch_min, neck_pitch_max, _ = JOINT_LIMITS["neck1_neck2"]
+
+        eye_yaw_min, eye_yaw_max, _ = JOINT_LIMITS["L_eye_yaw"]
+        eye_pitch_min, eye_pitch_max, _ = JOINT_LIMITS["L_eye_pitch"]
+
+        neck_pitch=0
+        neck_yaw=0
 
         for i in self.link_index:
             link_state=p.getLinkState(self.robot_id, i-2, computeForwardKinematics=True)
             position=np.array(link_state[0])
             
 
-
             cube_state = p.getBasePositionAndOrientation(self.cube_id)
             cube_position = np.array(cube_state[0])
 
             direction=cube_position-position
             direction_norm=direction/np.linalg.norm(direction)
+            print(direction_norm)
 
-            eye_yaw = np.arctan(direction_norm[0]/ -direction_norm[1])
-            eye_pitch = np.arcsin(direction_norm[2])
+            if direction_norm[1] <=0 or direction_norm[1] > 0:
+                # eye_yaw = np.arctan(direction_norm[0]/ -direction_norm[1])
+                eye_yaw = np.arctan2(direction_norm[0], -direction_norm[1])
 
+                eye_pitch = np.arcsin(direction_norm[2])
 
-            eye_yaw = np.clip(eye_yaw, -1, 1)
-            eye_pitch = np.clip(eye_pitch, -1, 1)
-        
+                if eye_yaw >= eye_yaw_max :
+                    neck_yaw= eye_yaw - eye_yaw_max
+                    if neck_yaw>eye_yaw_max:
+                        print('not reachable')
+                    eye_yaw = np.clip(eye_yaw, eye_yaw_min, eye_yaw_max)
+                    neck_yaw= np.clip(neck_yaw, neck_yaw_min, neck_yaw_max)
+
+                if eye_yaw <= eye_yaw_min:
+                    neck_yaw= eye_yaw - eye_yaw_min
+                    if neck_yaw<eye_yaw_min:
+                        print('not reachable')
+                    eye_yaw = np.clip(eye_yaw, eye_yaw_min, eye_yaw_max)
+                    neck_yaw= np.clip(neck_yaw, neck_yaw_min, neck_yaw_max)
+
+                if eye_pitch >= eye_pitch_max :
+                    neck_pitch= eye_pitch-eye_pitch_max
+                    if neck_pitch>eye_pitch_max:
+                        print('not reachable')
+                    eye_pitch = np.clip(eye_pitch, eye_pitch_min, eye_pitch_max)
+                    neck_pitch= np.clip(neck_pitch, neck_pitch_min, neck_pitch_max)
+
+                if eye_pitch <= eye_pitch_min:
+                    neck_pitch= eye_pitch-eye_pitch_min
+                    if neck_pitch<eye_pitch_min:
+                        print('not reachable')
+                    eye_pitch = np.clip(eye_pitch, eye_pitch_min, eye_pitch_max)
+                    neck_pitch= np.clip(neck_pitch, neck_pitch_min, neck_pitch_max)
+
+            
+            p.setJointMotorControl2(self.robot_id, 0, p.POSITION_CONTROL, targetPosition=neck_yaw)
+            p.setJointMotorControl2(self.robot_id, 1, p.POSITION_CONTROL, targetPosition=neck_pitch)
             p.setJointMotorControl2(self.robot_id, i-2, p.POSITION_CONTROL, targetPosition=eye_yaw)
             p.setJointMotorControl2(self.robot_id, i-1, p.POSITION_CONTROL, targetPosition=eye_pitch)
-            # print(direction_norm)
-            # print(eye_pitch)
+            
+
+
+    def min_max(self, joint_name):
+
+        min_val, max_val, _ = JOINT_LIMITS[joint_name]
+    
+        return np.array([min_val, max_val])
+
 
 
 ######################################################################
@@ -246,7 +293,8 @@ class FaceRobotEnv:
 
 if __name__ == "__main__":
     # Example usage
-    env = FaceRobotEnv(use_gui=True, debug_tool=False, object_location=[0.25, -1, 0.5]) #edit the object location here
+    #the usefixedbase is used to set the added square object to be fixed.
+    env = FaceRobotEnv(use_gui=True, debug_tool=False, usefixedbase=True ,object_location=[1.2, 0.45, 0.2]) #edit the object location here
 
     try:
         for _ in range(100000):  # Run simulation for 1000 steps
